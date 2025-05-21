@@ -1,0 +1,129 @@
+services:  
+  # service 1: paperless
+  paperless-broker:
+    image: docker.io/library/redis:8
+    container_name: paperless-broker
+    restart: unless-stopped
+    volumes:
+      - paperless-cache:/data
+  paperless-db:
+    image: docker.io/library/mariadb:11
+    restart: unless-stopped
+    container_name: paperless-db
+    volumes:
+      - paperless-db:/var/lib/mysql
+    env_file: ./paperless.db.env
+  paperless-webserver:
+    image: ghcr.io/paperless-ngx/paperless-ngx:latest
+    container_name: paperless-webserver
+    restart: unless-stopped
+    depends_on:
+      - paperless-broker
+      - paperless-db
+    volumes:
+      - ./paperless/data:/usr/src/paperless/data
+      - ./paperless/edia:/usr/src/paperless/media
+      - ./paperless/export:/usr/src/paperless/export
+      - ./paperless/consume:/usr/src/paperless/consume
+    env_file: ./paperless.webserver.env
+    environment:
+      - PAPERLESS_REDIS=redis://paperless-broker:6379
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.paperless.rule=Host(`paperless.${MY_DOMAIN}`)
+      - traefik.http.routers.paperless.entryPoints=websecure
+      - traefik.http.services.paperless-final.loadbalancer.server.port=8000
+      - traefik.http.routers.paperless.service=paperless-final
+  # service 2: nextcloud
+  nextcloud-broker:
+    image: docker.io/library/redis:8
+    container_name: nextcloud-broker
+    restart: unless-stopped
+    volumes:
+      - nextcloud-cache:/data
+  nextcloud-db:
+    image: mariadb
+    container_name: nextcloud-db 
+    restart: unless-stopped 
+    command: --transaction-isolation=READ-COMMITTED --binlog-format=ROW
+    volumes:
+      - nextcloud-db:/var/lib/mysql
+    env_file: ./nextcloud.db.env
+  nextcloud-webserver:
+    image: nextcloud
+    container_name: nextcloud-webserver
+    restart: unless-stopped
+    depends_on:
+      - nextcloud-broker
+      - nextcloud-db 
+    volumes:
+      - ./nextcloud/html:/var/www/html 
+      - ./nextcloud/custom_apps:/var/www/html/custom_apps
+      - ./nextcloud/config:/var/www/html/config
+      - ./nextcloud/data:/var/www/html/data
+    env_file: ./nextcloud.webserver.env
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.nextcloud.rule=Host(`nextcloud.${MY_DOMAIN}`)
+      - traefik.http.routers.nextcloud.entryPoints=websecure
+      - traefik.http.services.nextcloud-final.loadbalancer.server.port=80
+      - traefik.http.routers.nextcloud.service=nextcloud-final
+  # service 3: homepage
+  homepage:
+    image: ghcr.io/gethomepage/homepage:latest
+    container_name: homepage
+    restart: unless-stopped
+    volumes:
+      - ./homepage/config:/app/config
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - HOMEPAGE_ALLOWED_HOSTS=homepage.${MY_DOMAIN}
+      - PUID=1000
+      - PGID=1000
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.homepage.rule=Host(`homepage.${MY_DOMAIN}`)
+      - traefik.http.routers.homepage.entryPoints=websecure
+      - traefik.http.services.homepage-final.loadbalancer.server.port=3000
+      - traefik.http.routers.homepage.service=homepage-final
+  # reverse proxy & certificate
+  traefik:
+    image: traefik
+    container_name: traefik
+    restart: unless-stopped
+    command:
+      - --log.level=DEBUG
+      - --api.insecure=true
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --certificatesresolvers.letsencrypt.acme.dnschallenge=true
+      - --certificatesresolvers.letsencrypt.acme.dnschallenge.provider=porkbun
+      - --certificatesresolvers.letsencrypt.acme.email=${MY_EMAIL}
+      - --certificatesresolvers.letsencrypt.acme.dnschallenge.propagation.disableChecks=true
+      - --certificatesresolvers.letsencrypt.acme.dnschallenge.resolvers=1.1.1.1:53,8.8.8.8:53
+      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+      - --entrypoints.web.address=:80
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.websecure.http.tls=true
+      - --entrypoints.websecure.http.tls.certResolver=letsencrypt
+      - --entrypoints.websecure.http.tls.domains[0].main=${MY_DOMAIN}
+      - --entrypoints.websecure.http.tls.domains[0].sans=*.${MY_DOMAIN}
+    volumes:
+      - ./letsencrypt:/letsencrypt
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.api.rule=Host(`${MY_DOMAIN}`)
+      - traefik.http.routers.api.entryPoints=websecure
+      - traefik.http.routers.api.service=api@internal
+    ports:
+      - 443:443
+      - 80:80
+    env_file: traefik.env
+volumes:
+  paperless-cache:
+  paperless-db:
+  nextcloud-cache:
+  nextcloud-db:
