@@ -121,7 +121,9 @@ services:
     ports:
       - 443:443
       - 80:80
-    env_file: traefik.env
+    environment:
+      - PORKBUN_SECRET_API_KEY=${PORKBUN_SECRET_KEY}
+      - PORKBUN_API_KEY=${PORKBUN_API_KEY}
 volumes:
   paperless-cache:
   paperless-db:
